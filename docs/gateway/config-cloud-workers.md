@@ -87,6 +87,63 @@ Crabbox setup uses an environment-owned one-use pairing credential and the confi
   AWS admission requires `providerMetadata.instanceProfileAttached` to be false.
 </Note>
 
+### Local desktop profile
+
+The bundled `local-desktop` provider gives one agent its own Linux desktop in a Docker container on the Gateway host. Each lease is a fresh container running XFCE on a private VNC display and an ephemeral OpenClaw node that installs the Gateway's exact build. The agent's home directory (`/home/bot`) is a Docker volume that outlives leases, so files there persist between chats. Everything outside it resets when the computer closes, and the desktop user has no root access, so system packages cannot be installed. Nothing is published to the host network: the node connects out to the Gateway and relays the desktop.
+
+Set it up with one admin call instead of editing config:
+
+```bash
+openclaw gateway call localDesktop.setup --params '{"agentId":"main"}'
+```
+
+Setup changes nothing and names the next step when:
+
+- Docker is unavailable, or the Gateway's user may not use it;
+- the agent does not exist, or Gateway auth is `none`;
+- the host cannot listen on Docker's network. Rootless Docker, Docker Desktop, and remote Docker contexts all cause this; bot computers need rootful Docker Engine on the Gateway host;
+- the address computers would be given is loopback, link-local, or unspecified;
+- the Gateway would have to listen on Docker's network without a saved token or password (a token the Gateway generates at startup changes on every restart);
+- `tools.allow`, `tools.deny`, or the agent's `tools.deny` exclude `computer` or `my_computer`, or the agent has its own `tools.allow` under a tool profile that leaves them out.
+
+Otherwise it:
+
+- binds the Gateway to Docker's bridge address (`gateway.bind: "custom"`, `gateway.customBindHost`) unless the Gateway already gives workers a reachable address. Setup resolves that address the way node enrollment does, including `gateway.publicOrigin`, `plugins.entries.device-pair.config.publicUrl`, and Tailscale Serve. The Gateway keeps listening on `127.0.0.1`. The result's `gatewayRestart` is `automatic` when the Gateway restarts itself to listen there, `manual` when `gateway.reload.mode` is `off` and you must run `openclaw gateway restart` before setup applies, or `none` when no restart is needed;
+- turns on `cloudWorkers.desktop`, so the chat's Desktop panel can show and hand over the computer;
+- adds a profile named `computer-<agentId>`;
+- adds `computer` and `my_computer` to the agent's `tools.allow` (when it has one) or `tools.alsoAllow`. A new agent `alsoAllow` starts from the global `tools.alsoAllow`, because an agent list replaces the global one.
+
+```json5
+{
+  cloudWorkers: {
+    desktop: true,
+    profiles: {
+      "computer-main": {
+        provider: "local-desktop",
+        install: "bundle",
+        suspendAfter: "30m",
+        settings: { agentId: "main" },
+      },
+    },
+  },
+}
+```
+
+- `settings.agentId` (required, the only setting): the agent whose disk the computer uses. Unknown settings are rejected.
+- The agent opens its computer with the `my_computer` tool (`open`, `status`, `close`) and passes the returned `environmentId` to `computer`. Both tools are owner-only and are not offered in sandboxed runs.
+- One open computer per agent disk: opening it from a second chat fails until the first chat closes it.
+- The first open builds the image (tagged by a hash of the plugin's image files) and installs OpenClaw on the agent's disk; later opens reuse both. This install removes the images it built earlier once no computer runs them. The image trusts the Gateway's `NODE_EXTRA_CA_CERTS`, so downloads work behind a TLS-inspecting proxy the host already trusts.
+- Containers drop all capabilities, run with `no-new-privileges`, and are limited to 2 GiB of memory and 4096 processes. Expect about 1 GiB per open computer.
+
+<Warning>
+Know these limits before giving a bot its computer:
+
+- **Gateway start depends on Docker.** After setup binds the Gateway to Docker's bridge, the Gateway refuses to start while that address is missing: Docker stopped or removed, or started after the Gateway at boot. Enable Docker at boot (`sudo systemctl enable --now docker`), or undo the bind with `openclaw config set gateway.bind loopback` and `openclaw config unset gateway.customBindHost`. A Gateway started with `--bind` keeps that bind and ignores setup's.
+- **`computer` is not limited to the bot's computer.** Without an `environmentId`, the `computer` tool can also drive the Gateway host's desktop or a paired computer node when those are set up.
+- **Computers have the host's network reach.** They join Docker's default bridge, so they can reach other containers, services on the host's networks, and cloud metadata addresses. On a cloud VM, block metadata from containers: `sudo iptables -I DOCKER-USER -d 169.254.0.0/16 -j DROP`.
+- **Disks outlive agents.** A disk is named after its agent id and stays when the agent is deleted, so a new agent with the same id gets its files. To remove one, delete the `computer-<agentId>` profile, list the disks with `docker volume ls --filter label=openclaw.local-desktop.disk`, and run `docker volume rm` on the one named `openclaw-desktop-<install>-<agentId>-<hash>`.
+</Warning>
+
 ### Static SSH development profile
 
 ```json5

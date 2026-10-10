@@ -1641,7 +1641,7 @@ describe("gateway run option collisions", () => {
         expect(ensureDevGatewayConfig).toHaveBeenCalledWith({ reset: true });
       } else {
         const options = gatewayStartOptions();
-        expect(options.bind).toBe("loopback");
+        expect(options.bind).toBeUndefined();
         expect(options.startupConfigSnapshotRead?.snapshot?.valid).toBe(false);
       }
     },
@@ -1671,9 +1671,11 @@ describe("gateway run option collisions", () => {
     );
   });
 
-  it("allows password mode preflight when password is configured via SecretRef", async () => {
+  it("allows SecretRef password preflight and leaves a configured bind to each start", async () => {
     configState.cfg = {
       gateway: {
+        bind: "custom",
+        customBindHost: "172.17.0.1",
         auth: {
           mode: "password",
           password: { source: "env", provider: "default", id: "OPENCLAW_GATEWAY_PASSWORD" },
@@ -1685,16 +1687,12 @@ describe("gateway run option collisions", () => {
         },
       },
     };
-    configState.snapshot = {
-      exists: true,
-      valid: true,
-      config: configState.cfg,
-      parsed: configState.cfg,
-    };
+    configState.snapshot = configSnapshot(configState.cfg, { parsed: configState.cfg });
 
     await runGatewayCli(["gateway", "run", "--allow-unconfigured"]);
 
-    expect(gatewayStartOptions().bind).toBe("loopback");
+    // Only --bind pins the listener; the server reads gateway.bind again on in-process restarts.
+    expect(gatewayStartOptions().bind).toBeUndefined();
   });
 
   it("reads gateway password from --password-file", async () => {
