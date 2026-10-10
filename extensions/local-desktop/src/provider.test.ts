@@ -212,7 +212,12 @@ describe("local desktop provider", () => {
     });
     const provider = createLocalDesktopProvider(host.machines);
 
-    for (const settings of [{}, { agentId: "" }, { agentId: "main", memory: "4g" }]) {
+    const invalid: Array<Record<string, string>> = [
+      {},
+      { agentId: "" },
+      { agentId: "main", memory: "4g" },
+    ];
+    for (const settings of invalid) {
       await expect(
         provider.provision(settings, "op-1", { beginNodeEnrollment: async () => enrollment() }),
       ).rejects.toBeInstanceOf(WorkerProviderError);

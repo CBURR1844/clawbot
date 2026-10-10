@@ -39,8 +39,12 @@ function fakeGateway(attached?: { id: string; status: string; worker?: { provide
   const calls: Array<{ method: string; params: Record<string, unknown>; scopes?: string[] }> = [];
   let environment = attached;
   const gateway = {
-    request: async (method: string, params: Record<string, unknown> = {}, options = {}) => {
-      calls.push({ method, params, ...("scopes" in options ? { scopes: options.scopes } : {}) });
+    request: async (
+      method: string,
+      params: Record<string, unknown> = {},
+      options: { scopes?: string[] } = {},
+    ) => {
+      calls.push({ method, params, ...(options.scopes ? { scopes: options.scopes } : {}) });
       if (method === "environments.session.create") {
         environment = { id: "env-1", status: "starting", worker: { providerId: "local-desktop" } };
         return { environment };
