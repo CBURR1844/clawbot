@@ -123,8 +123,7 @@ const download = async (archive) => {
     } catch (error) {
       const network = ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"].includes(error.code);
       if (attempt >= 3 || !(network || error.retry)) {
-        const hint = error.code === "ECONNREFUSED" ? ". If Docker started after the Gateway, restart the Gateway so it listens on Docker's network" : "";
-        throw new Error("Could not download OpenClaw from the Gateway at " + new URL(bootstrap.url).origin + ": " + error.message + hint, { cause: error });
+        throw new Error("Could not download OpenClaw from the Gateway at " + new URL(bootstrap.url).origin + ": " + error.message, { cause: error });
       }
       fs.rmSync(archive, { force: true });
       await sleep(1000 * attempt);

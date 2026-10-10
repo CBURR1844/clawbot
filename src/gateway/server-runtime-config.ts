@@ -6,6 +6,7 @@ import type {
   GatewayTailscaleConfig,
 } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { GatewayScheduler } from "../infra/gateway-scheduler.js";
 import {
   formatUnsafeGatewayTailscaleNoAuthMessage,
   isUnsafeGatewayTailscaleNoAuth,
@@ -20,6 +21,7 @@ import { warnLegacyOpenClawEnvVars } from "./env-deprecation.js";
 import { commitHookTransformMappingReload } from "./hooks-mapping.js";
 import { resolveHooksConfig } from "./hooks.js";
 import {
+  canBindToHost,
   defaultGatewayBindMode,
   isLoopbackHost,
   isValidIPv4,
@@ -150,7 +152,7 @@ export async function resolveGatewayRuntimeConfig(params: {
   const bindMode =
     bindExplicit ?? (tailscaleModeEarly !== "off" ? "loopback" : defaultGatewayBindMode());
   const customBindHost = params.cfg.gateway?.customBindHost;
-  const bindHost = params.host ?? (await resolveGatewayBindHost(bindMode, customBindHost));
+  let bindHost = params.host ?? (await resolveGatewayBindHost(bindMode, customBindHost));
   if (bindMode === "loopback" && !isLoopbackHost(bindHost)) {
     throw new Error(
       `gateway bind=loopback resolved to non-loopback host ${bindHost}; refusing fallback to a network bind`,
@@ -173,12 +175,14 @@ export async function resolveGatewayRuntimeConfig(params: {
       );
     }
     if (bindHost !== configuredCustomBindHost) {
-      // The resolver narrows an address that is not up yet to loopback; anything else conflicts.
-      if (params.host !== undefined || !isLoopbackHost(bindHost)) {
+      if (params.host !== undefined) {
         throw new Error(
           `gateway bind=custom requested ${configuredCustomBindHost} but resolved ${bindHost}; refusing fallback`,
         );
       }
+      // A valid address that is not on this machine yet (Docker's bridge before Docker starts)
+      // narrows to loopback, never wider; watchUnavailableCustomBindHost restarts onto it later.
+      bindHost = "127.0.0.1";
       unavailableCustomBindHost = configuredCustomBindHost;
     }
   }
@@ -210,9 +214,57 @@ export async function resolveGatewayRuntimeConfig(params: {
     tailscaleMode,
     hooksConfig,
   };
-  assertGatewayRuntimeSecurityConfig({ ...runtimeConfig, cfg: params.cfg, port: params.port });
+  // Auth policy follows the configured exposure, not the temporary loopback listener.
+  assertGatewayRuntimeSecurityConfig({
+    ...runtimeConfig,
+    bindHost: unavailableCustomBindHost ?? bindHost,
+    cfg: params.cfg,
+    port: params.port,
+  });
   if (hooksConfig) {
     commitHookTransformMappingReload();
   }
   return runtimeConfig;
+}
+
+const CUSTOM_BIND_HOST_PROBE_MS = 15_000;
+
+/**
+ * Warns that the Gateway fell back to loopback, then restarts it onto its custom address once
+ * that address exists on this machine. The job belongs to this start's scheduler, so shutdown
+ * and in-process restarts cancel it.
+ */
+export function watchUnavailableCustomBindHost(params: {
+  host: string;
+  scheduler: Pick<GatewayScheduler, "schedule">;
+  log: { warn: (message: string) => void; info: (message: string) => void };
+  canBindToHost?: (host: string) => Promise<boolean>;
+  restart?: () => Promise<unknown>;
+}): void {
+  const { host, log } = params;
+  log.warn(
+    `gateway.customBindHost ${host} is not on this machine yet, so the Gateway listens on 127.0.0.1 only. It restarts onto ${host} once that address exists.`,
+  );
+  const probe = params.canBindToHost ?? canBindToHost;
+  const restart =
+    params.restart ??
+    (async () => {
+      const { scheduleSafeGatewayRestart } = await import("../infra/restart-coordinator.js");
+      return scheduleSafeGatewayRestart({ reason: "gateway.custom-bind-host-available" });
+    });
+  const job = params.scheduler.schedule({
+    id: "gateway:custom-bind-host",
+    delayMs: CUSTOM_BIND_HOST_PROBE_MS,
+    everyMs: CUSTOM_BIND_HOST_PROBE_MS,
+    run: async () => {
+      if (!(await probe(host))) {
+        return;
+      }
+      job.cancel();
+      log.info(
+        `gateway.customBindHost ${host} is now on this machine; restarting the Gateway to listen there.`,
+      );
+      await restart();
+    },
+  });
 }

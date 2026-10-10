@@ -1,8 +1,16 @@
 // Runtime config tests cover gateway bind/auth resolution, trusted proxy rules,
 // container defaults, and invalid config rejection before server startup.
+import net from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetContainerEnvironmentCacheForTest } from "../infra/container-environment.js";
-import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
+import {
+  createGatewaySchedulerClock,
+  createTestGatewayScheduler,
+} from "../test-utils/gateway-scheduler-clock.js";
+import {
+  resolveGatewayRuntimeConfig,
+  watchUnavailableCustomBindHost,
+} from "./server-runtime-config.js";
 
 const TRUSTED_PROXY_AUTH = {
   mode: "trusted-proxy" as const,
@@ -194,14 +202,41 @@ describe("resolveGatewayRuntimeConfig", () => {
       );
     });
 
-    it("listens on loopback and reports a custom address that is not on this machine", async () => {
-      // 192.0.2.0/24 is reserved for documentation, so no interface holds it.
-      const cfg = {
-        gateway: { bind: "custom" as const, customBindHost: "192.0.2.1", auth: TOKEN_AUTH },
-      };
-      const result = await resolveGatewayRuntimeConfig({ cfg, port: 18789 });
-      expect(result.bindHost).toBe("127.0.0.1");
-      expect(result.unavailableCustomBindHost).toBe("192.0.2.1");
+    it("listens on loopback while the custom address is missing, keeping its auth policy", async () => {
+      const missing = vi.spyOn(net, "createServer").mockImplementation(() => {
+        const probe = new net.Server();
+        vi.spyOn(probe, "listen").mockImplementation(() => {
+          queueMicrotask(() =>
+            probe.emit(
+              "error",
+              Object.assign(new Error("listen EADDRNOTAVAIL"), { code: "EADDRNOTAVAIL" }),
+            ),
+          );
+          return probe;
+        });
+        return probe;
+      });
+      try {
+        const custom = {
+          bind: "custom" as const,
+          customBindHost: "172.17.0.1",
+          controlUi: { allowedOrigins: ["http://172.17.0.1:18789"] },
+        };
+        const result = await resolveGatewayRuntimeConfig({
+          cfg: { gateway: { ...custom, auth: TOKEN_AUTH } },
+          port: 18789,
+        });
+        expect(result.bindHost).toBe("127.0.0.1");
+        expect(result.unavailableCustomBindHost).toBe("172.17.0.1");
+        await expect(
+          resolveGatewayRuntimeConfig({
+            cfg: { gateway: { ...custom, auth: { mode: "none" as const } } },
+            port: 18789,
+          }),
+        ).rejects.toThrow("refusing to bind gateway to 172.17.0.1:18789 without auth");
+      } finally {
+        missing.mockRestore();
+      }
     });
 
     it.each([
@@ -390,5 +425,27 @@ describe("resolveGatewayRuntimeConfig", () => {
       });
       expect(result.bindHost).toBe("0.0.0.0");
     });
+  });
+});
+
+describe("watchUnavailableCustomBindHost", () => {
+  it("restarts the Gateway once the custom address exists, then stops checking", async () => {
+    const time = createGatewaySchedulerClock(0);
+    const scheduler = createTestGatewayScheduler(time.clock);
+    const answers = [false, true];
+    const canBindToHost = vi.fn(async () => answers.shift() ?? true);
+    const restart = vi.fn(async () => undefined);
+    const log = { warn: vi.fn(), info: vi.fn() };
+
+    watchUnavailableCustomBindHost({ host: "172.17.0.1", scheduler, log, canBindToHost, restart });
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("listens on 127.0.0.1 only"));
+
+    await time.advanceBy(15_000);
+    expect(restart).not.toHaveBeenCalled();
+    await time.advanceBy(15_000);
+    expect(restart).toHaveBeenCalledOnce();
+    await time.advanceBy(15_000);
+    expect(canBindToHost).toHaveBeenCalledTimes(2);
+    await scheduler.stop();
   });
 });

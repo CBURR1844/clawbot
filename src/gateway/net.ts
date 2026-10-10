@@ -267,12 +267,10 @@ export async function resolveGatewayBindHost(
   }
   if (mode === "custom") {
     const host = customHost?.trim();
-    if (host && isValidIPv4(host)) {
-      // An address that is not up yet (Docker's bridge before Docker starts) narrows to
-      // loopback, never to all interfaces; runtime startup warns about it.
-      return (await canBindToHost(host)) ? host : "127.0.0.1";
+    if (host && isValidIPv4(host) && (await canBindToHost(host))) {
+      return host;
     }
-    // Runtime startup rejects a missing or invalid address; status/display callers remain best-effort.
+    // Runtime startup rejects this fallback; status/display callers remain best-effort.
   }
 
   return "0.0.0.0";
@@ -299,7 +297,8 @@ export function defaultGatewayBindMode(tailscaleMode?: string): GatewayBindMode 
   return isContainerEnvironment() ? "auto" : "loopback";
 }
 
-async function canBindToHost(host: string): Promise<boolean> {
+/** Whether this machine can listen on `host` now (any free port; a missing address fails). */
+export async function canBindToHost(host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const testServer = net.createServer();
     const timeout = setTimeout(() => finish(false), 3000);

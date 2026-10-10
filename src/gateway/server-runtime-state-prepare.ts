@@ -307,11 +307,15 @@ export async function prepareGatewayKernelState(params: {
     unavailableCustomBindHost,
   } = runtimeConfig;
   if (unavailableCustomBindHost) {
-    log.warn(
-      `gateway.customBindHost ${unavailableCustomBindHost} is not on this machine yet, so the Gateway listens on ${bindHost} only. Restart the Gateway once ${unavailableCustomBindHost} exists (for example after Docker starts).`,
-    );
+    const { watchUnavailableCustomBindHost } = await import("./server-runtime-config.js");
+    watchUnavailableCustomBindHost({ host: unavailableCustomBindHost, scheduler, log });
   }
-  if (bootstrap.generatedStartupAuthToken && isLoopbackHost(bindHost)) {
+  // A loopback fallback is temporary, so it must not leave a durable local CLI pairing behind.
+  if (
+    bootstrap.generatedStartupAuthToken &&
+    isLoopbackHost(bindHost) &&
+    !unavailableCustomBindHost
+  ) {
     const { ensureStartupLocalCliPairing } = await startupTrace.measure(
       "runtime.local-cli-pairing-import",
       () => import("./startup-local-cli-pairing.js"),
