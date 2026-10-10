@@ -6,7 +6,7 @@ import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { racePromiseWithAbortSignal } from "openclaw/plugin-sdk/time-runtime";
 
 /** Exit facts from one engine command; mirrors the SDK command runner result. */
-export type CommandResult = {
+type CommandResult = {
   code: number | null;
   stdout: string;
   stderr: string;
@@ -23,7 +23,7 @@ export type CommandRunner = (
   },
 ) => Promise<CommandResult>;
 
-export type MachineState = "running" | "stopped" | "absent";
+type MachineState = "running" | "stopped" | "absent";
 
 /** The image's build context and the content-hash tag it builds to. */
 type ImageSource = { context: Map<string, Buffer>; tag: string };

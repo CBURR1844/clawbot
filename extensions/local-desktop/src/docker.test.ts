@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it } from "vitest";
-import { createDesktopMachines, type CommandResult, type CommandRunner } from "./docker.js";
+import { createDesktopMachines, type CommandRunner } from "./docker.js";
+
+type CommandResult = Awaited<ReturnType<CommandRunner>>;
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 

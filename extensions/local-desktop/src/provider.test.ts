@@ -1,8 +1,10 @@
 import { WorkerProviderError } from "openclaw/plugin-sdk/plugin-entry";
 import { describe, expect, it } from "vitest";
-import type { DesktopMachines, MachineState } from "./docker.js";
+import type { DesktopMachines } from "./docker.js";
 import type { NodeEnrollment } from "./guest-node.js";
 import { createLocalDesktopProvider, readComputerOwner } from "./provider.js";
+
+type MachineState = Awaited<ReturnType<DesktopMachines["state"]>>;
 
 const PROFILE = { agentId: "main" };
 
