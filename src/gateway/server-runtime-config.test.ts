@@ -176,10 +176,32 @@ describe("resolveGatewayRuntimeConfig", () => {
         host: "0.0.0.0",
         expectedMessage: "gateway bind=custom requested 192.168.1.100 but resolved 0.0.0.0",
       },
+      {
+        name: "custom bind with a different loopback host override",
+        cfg: {
+          gateway: {
+            bind: "custom" as const,
+            customBindHost: "192.168.1.100",
+            auth: TOKEN_AUTH,
+          },
+        },
+        host: "127.0.0.1",
+        expectedMessage: "gateway bind=custom requested 192.168.1.100 but resolved 127.0.0.1",
+      },
     ])("rejects $name", async ({ cfg, host, expectedMessage }) => {
       await expect(resolveGatewayRuntimeConfig({ cfg, port: 18789, host })).rejects.toThrow(
         expectedMessage,
       );
+    });
+
+    it("listens on loopback and reports a custom address that is not on this machine", async () => {
+      // 192.0.2.0/24 is reserved for documentation, so no interface holds it.
+      const cfg = {
+        gateway: { bind: "custom" as const, customBindHost: "192.0.2.1", auth: TOKEN_AUTH },
+      };
+      const result = await resolveGatewayRuntimeConfig({ cfg, port: 18789 });
+      expect(result.bindHost).toBe("127.0.0.1");
+      expect(result.unavailableCustomBindHost).toBe("192.0.2.1");
     });
 
     it.each([

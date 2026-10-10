@@ -29,6 +29,8 @@ import { mergeGatewayTailscaleConfig } from "./startup-auth.js";
 
 type GatewayRuntimeConfig = {
   bindHost: string;
+  /** The configured custom address that is not on this machine, so bindHost fell back to loopback. */
+  unavailableCustomBindHost?: string;
   controlUiEnabled: boolean;
   controlUiBasePath: string;
   controlUiRoot?: string;
@@ -159,6 +161,7 @@ export async function resolveGatewayRuntimeConfig(params: {
       "gateway bind=tailnet could not resolve a Tailscale or loopback address; refusing wildcard fallback",
     );
   }
+  let unavailableCustomBindHost: string | undefined;
   if (bindMode === "custom") {
     const configuredCustomBindHost = customBindHost?.trim();
     if (!configuredCustomBindHost) {
@@ -170,9 +173,13 @@ export async function resolveGatewayRuntimeConfig(params: {
       );
     }
     if (bindHost !== configuredCustomBindHost) {
-      throw new Error(
-        `gateway bind=custom requested ${configuredCustomBindHost} but resolved ${bindHost}; refusing fallback`,
-      );
+      // The resolver narrows an address that is not up yet to loopback; anything else conflicts.
+      if (params.host !== undefined || !isLoopbackHost(bindHost)) {
+        throw new Error(
+          `gateway bind=custom requested ${configuredCustomBindHost} but resolved ${bindHost}; refusing fallback`,
+        );
+      }
+      unavailableCustomBindHost = configuredCustomBindHost;
     }
   }
   const controlUiEnabled =
@@ -193,6 +200,7 @@ export async function resolveGatewayRuntimeConfig(params: {
   const hooksConfig = resolveHooksConfig(params.cfg);
   const runtimeConfig = {
     bindHost,
+    ...(unavailableCustomBindHost ? { unavailableCustomBindHost } : {}),
     controlUiEnabled,
     controlUiBasePath,
     controlUiRoot,

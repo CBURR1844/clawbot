@@ -267,10 +267,12 @@ export async function resolveGatewayBindHost(
   }
   if (mode === "custom") {
     const host = customHost?.trim();
-    if (host && isValidIPv4(host) && (await canBindToHost(host))) {
-      return host;
+    if (host && isValidIPv4(host)) {
+      // An address that is not up yet (Docker's bridge before Docker starts) narrows to
+      // loopback, never to all interfaces; runtime startup warns about it.
+      return (await canBindToHost(host)) ? host : "127.0.0.1";
     }
-    // Runtime startup rejects this fallback; status/display callers remain best-effort.
+    // Runtime startup rejects a missing or invalid address; status/display callers remain best-effort.
   }
 
   return "0.0.0.0";

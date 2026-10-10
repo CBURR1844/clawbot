@@ -651,6 +651,11 @@ describe("resolveGatewayBindHost", () => {
     expect(probe.address()).toBeNull();
   });
 
+  it("narrows a custom address that is not on this machine to loopback", async () => {
+    // 192.0.2.0/24 is reserved for documentation, so no interface holds it.
+    expect(await resolveGatewayBindHost("custom", "192.0.2.1")).toBe("127.0.0.1");
+  });
+
   it("returns 127.0.0.1 for auto mode on non-container host", async () => {
     mockCgroup("12:memory:/user.slice\n");
     expect(await resolveGatewayBindHost("auto")).toBe("127.0.0.1");

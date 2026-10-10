@@ -304,7 +304,13 @@ export async function prepareGatewayKernelState(params: {
     resolvedAuth,
     tailscaleConfig,
     tailscaleMode,
+    unavailableCustomBindHost,
   } = runtimeConfig;
+  if (unavailableCustomBindHost) {
+    log.warn(
+      `gateway.customBindHost ${unavailableCustomBindHost} is not on this machine yet, so the Gateway listens on ${bindHost} only. Restart the Gateway once ${unavailableCustomBindHost} exists (for example after Docker starts).`,
+    );
+  }
   if (bootstrap.generatedStartupAuthToken && isLoopbackHost(bindHost)) {
     const { ensureStartupLocalCliPairing } = await startupTrace.measure(
       "runtime.local-cli-pairing-import",
